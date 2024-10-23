@@ -1,0 +1,106 @@
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font
+from datetime import datetime
+import unidecode
+
+# Função para ler e copiar os dados da primeira planilha
+def ler_planilha1():
+    caminho_planilha1 = r'C:\Users\diego.brito\OneDrive - Ministério do Desenvolvimento e Assistência Social\Power BI\Python\Consulta Parecer\Consulta Transferegov Parecer Novo.xlsx'
+    try:
+        df_planilha1 = pd.read_excel(caminho_planilha1)
+        df_planilha1.columns = df_planilha1.columns.str.strip()
+        df_planilha1['Proposta'] = df_planilha1['Proposta'].astype(str).str.strip().apply(unidecode.unidecode)
+        return df_planilha1
+    except FileNotFoundError as e:
+        print(f"Erro: Arquivo não encontrado - {e}")
+        raise
+
+# Função para ler a segunda planilha
+def ler_planilha2():
+    caminho_planilha2 = r'C:\Users\diego.brito\OneDrive - Ministério do Desenvolvimento e Assistência Social\Power BI\Python\Consulta Transferegov Requisitos.xlsx'
+    df_planilha2 = pd.read_excel(caminho_planilha2)
+    df_planilha2.columns = df_planilha2.columns.str.strip()
+    df_planilha2['Proposta'] = df_planilha2['Proposta'].astype(str).str.strip().apply(unidecode.unidecode)
+    return df_planilha2
+
+# Função para combinar as duas planilhas e garantir que 'Data da Consulta' esteja no final
+def combinar_planilhas(df1, df2):
+    # Combinar os dados das duas planilhas pela coluna 'Proposta'
+    df_combinado = pd.merge(df1, df2, on='Proposta', how='outer', indicator=True)
+
+    # Verifica se as colunas existem, se não, cria
+    if 'Ação Necessária' not in df_combinado.columns:
+        df_combinado['Ação Necessária'] = None
+    if 'Ação Necessária do Dia Anterior' not in df_combinado.columns:
+        df_combinado['Ação Necessária do Dia Anterior'] = None
+
+    # Adiciona a data atual como coluna se ainda não existir
+    if 'Data da Consulta' not in df_combinado.columns:
+        df_combinado['Data da Consulta'] = pd.to_datetime(datetime.now().strftime('%Y-%m-%d'))
+
+    # Ordenar pela Proposta e Data da Consulta para garantir ordem cronológica
+    df_combinado.sort_values(by=['Proposta', 'Data da Consulta'], ascending=[True, True], inplace=True)
+
+    # Preencher a coluna "Ação Necessária do Dia Anterior" com o valor anterior
+    df_combinado['Ação Necessária do Dia Anterior'] = (
+        df_combinado.groupby('Proposta')['Ação Necessária'].shift(1)
+    )
+
+    # Reorganizar as colunas para garantir que 'Data da Consulta' seja a última
+    cols = [col for col in df_combinado.columns if col != 'Data da Consulta']
+    cols.append('Data da Consulta')  # Adiciona 'Data da Consulta' no final
+    df_combinado = df_combinado[cols]
+
+    return df_combinado
+
+# Função para verificar e aplicar a formatação se não houver mudança na ação necessária
+def verificar_acoes_anteriores(workbook_path):
+    workbook = load_workbook(workbook_path)
+    sheet = workbook.active
+
+    # Estilo para célula sem alteração: fundo preto e fonte branca
+    estilo_preto = PatternFill(start_color='000000', end_color='000000', fill_type='solid')
+    fonte_branca = Font(color='FFFFFF')
+
+    # Mapeamento das colunas para localizar as posições
+    col_map = {cell.value: idx for idx, cell in enumerate(sheet[1], 1)}
+
+    # Localizar as colunas necessárias
+    col_acao_necessaria = col_map.get('Ação Necessária')
+    col_acao_anterior = col_map.get('Ação Necessária do Dia Anterior')
+
+    if col_acao_necessaria is None or col_acao_anterior is None:
+        raise ValueError("Não foi possível encontrar as colunas 'Ação Necessária' ou 'Ação Necessária do Dia Anterior'.")
+
+    # Iterar sobre as linhas e comparar os valores
+    for row in range(2, sheet.max_row + 1):
+        celula_acao = sheet.cell(row=row, column=col_acao_necessaria)
+        celula_acao_anterior = sheet.cell(row=row, column=col_acao_anterior)
+
+        # Se a ação do dia anterior for igual à atual, aplicar estilo preto
+        if celula_acao.value == celula_acao_anterior.value:
+            celula_acao_anterior.fill = estilo_preto
+            celula_acao_anterior.font = fonte_branca
+        else:
+            # Atualizar a ação anterior com o valor atual
+            celula_acao_anterior.value = celula_acao.value
+
+    workbook.save(workbook_path)
+
+# Função para salvar a planilha combinada com as colunas adicionadas
+def salvar_planilha(df, caminho):
+    df.to_excel(caminho, index=False)  # Salvar o DataFrame no caminho especificado
+    verificar_acoes_anteriores(caminho)  # Verificar e aplicar a lógica de mudança
+
+# Função principal para executar o processo
+def executar_combinacao_planilhas():
+    df1 = ler_planilha1()
+    df2 = ler_planilha2()
+    df_combinado = combinar_planilhas(df1, df2)
+
+    caminho_resultado = r'C:\Users\diego.brito\OneDrive - Ministério do Desenvolvimento e Assistência Social\Power BI\Python\Consulta Transferegov Resultado Novo.xlsx'
+    salvar_planilha(df_combinado, caminho_resultado)
+
+# Executar o processo
+executar_combinacao_planilhas()
